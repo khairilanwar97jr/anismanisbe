@@ -1,3 +1,14 @@
+
+console.log("=== BILLPLZ DEBUG ===");
+console.log("MODE:", process.env.MODE);
+
+console.log("apiUrl:", billplz.apiUrl);
+console.log("apiKey:", billplz.apiKey);
+console.log("collectionId:", billplz.collectionId);
+
+console.log("frontendUrl:", billplz.frontendUrl);
+console.log("backendUrl:", billplz.backendUrl);
+
 const paymentService = require('../services/paymentService');
 
 const createPayment = async (req, res) => {
