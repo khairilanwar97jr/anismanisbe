@@ -1,20 +1,18 @@
-
-console.log("=== BILLPLZ DEBUG ===");
-console.log("MODE:", process.env.MODE);
-
-console.log("apiUrl:", billplz.apiUrl);
-console.log("apiKey:", billplz.apiKey);
-console.log("collectionId:", billplz.collectionId);
-
-console.log("frontendUrl:", billplz.frontendUrl);
-console.log("backendUrl:", billplz.backendUrl);
-
 const paymentService = require('../services/paymentService');
+const billplz = require('../config/billplz');
 
 const createPayment = async (req, res) => {
   try {
     console.log("=== CREATE PAYMENT ===");
     console.log("Body:", req.body);
+
+    console.log("=== BILLPLZ DEBUG ===");
+    console.log("MODE:", process.env.MODE);
+    console.log("apiUrl:", billplz.apiUrl);
+    console.log("apiKey:", billplz.apiKey);
+    console.log("collectionId:", billplz.collectionId);
+    console.log("frontendUrl:", billplz.frontendUrl);
+    console.log("backendUrl:", billplz.backendUrl);
 
     const result = await paymentService.createPayment(req.body);
 
