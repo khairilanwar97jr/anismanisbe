@@ -70,10 +70,9 @@ const handleWebhook = async (payload) => {
   console.log("Webhook received:", payload);
 
   const { id, paid } = payload;
-
   const isPaid = paid === "true";
 
-  // update payment table
+  // 1. UPDATE PAYMENT
   const { data: payment, error } = await supabase
     .from('payments')
     .update({
@@ -86,9 +85,10 @@ const handleWebhook = async (payload) => {
 
   if (error) throw error;
 
-  // update order table
+  // 2. ONLY PROCESS IF PAID
   if (isPaid && payment) {
 
+    // 3. UPDATE ORDER + GET FULL DATA
     const { data: updatedOrder, error: orderError } = await supabase
       .from('orders')
       .update({
@@ -96,38 +96,65 @@ const handleWebhook = async (payload) => {
         payment_status: 'PAID'
       })
       .eq('id', payment.order_id)
-      .neq('payment_status', 'PAID')
       .select(`
-  *,
-  order_items (
-    *,
-    products (
-      name,
-      price
-    ),
-    order_item_addons (
-      quantity,
-      unit_price,
-      addons (
-        name,
-        price
-      )
-    )
-  )
-`)
-      .single();
+        *,
+        order_items (
+          *,
+          products (
+            name,
+            price
+          ),
+          order_item_addons (
+            quantity,
+            unit_price,
+            addons (
+              name,
+              price
+            )
+          )
+        )
+      `)
+      .maybeSingle();
 
     if (orderError) throw orderError;
 
-    // STOP if already processed
     if (!updatedOrder) {
-      console.log("Order already processed, skipping email");
+      console.log("Order already processed or not found");
       return { message: "Already processed" };
     }
 
-    // ✅ NOW safe to build email
-    const emailMessage = buildEmailTemplate(updatedOrder);
+    // ===============================
+    // 4. BUILD EMAILS
+    // ===============================
+
+    const customerEmailMessage = buildEmailTemplate(updatedOrder);
+    const ownerEmailMessage = buildEmailTemplate(updatedOrder);
+
     try {
+
+      // ===============================
+      // 5. SEND CUSTOMER EMAIL
+      // ===============================
+      await axios.post(
+        "https://api.emailjs.com/api/v1.0/email/send",
+        {
+          service_id: process.env.EMAILJS_SERVICE_ID,
+          template_id: process.env.EMAILJS_TEMPLATE_ID,
+          user_id: process.env.EMAILJS_PUBLIC_KEY,
+          accessToken: process.env.EMAILJS_PRIVATE_KEY,
+
+
+          template_params: {
+            email: updatedOrder.guest_email,
+            order_id: updatedOrder.id,
+            message: customerEmailMessage
+          }
+        }
+      );
+
+      // ===============================
+      // 6. SEND OWNER EMAIL
+      // ===============================
       await axios.post(
         "https://api.emailjs.com/api/v1.0/email/send",
         {
@@ -137,13 +164,15 @@ const handleWebhook = async (payload) => {
           accessToken: process.env.EMAILJS_PRIVATE_KEY,
 
           template_params: {
+            email: "kaibinaidea@gmail.com", //pruanisalimin@gmail.com
             order_id: updatedOrder.id,
-            message: emailMessage
+            message: ownerEmailMessage
           }
         }
       );
 
-      console.log("Email sent successfully");
+      console.log("Emails sent successfully");
+
     } catch (err) {
       console.error("Email failed:", err.response?.data || err.message);
     }
@@ -154,35 +183,82 @@ const handleWebhook = async (payload) => {
   };
 };
 
-
+// build email template
 const buildEmailTemplate = (order) => {
+
+  const safeNumber = (val) => {
+    const n = Number(val);
+    return Number.isNaN(n) ? 0 : n;
+  };
 
   const items = order.order_items || [];
 
+  // =========================
+  // ✅ CALCULATION BLOCK
+  // =========================
+
+  const cartAddonTotal = items.reduce((sum, item) => {
+    return sum + (item.order_item_addons || []).reduce((a, addon) => {
+      const price = safeNumber(addon.unit_price);
+      const qty = safeNumber(addon.quantity);
+      return a + (price * qty);
+    }, 0);
+  }, 0);
+
+  const cartTotalWithAddons = safeNumber(order.total_amount) + cartAddonTotal;
+
+  const totalPaidWithFee = safeNumber(order.grand_total) + 1.25;
+
+  // =========================
+
+  // ✅ HANDLE EMPTY ORDER ITEMS
+  if (!items.length) {
+    return `
+AnisManis Order Receipt
+
+Order ID: ${order.id}
+Status: ${order.order_status || "PAID"}
+
+Name: ${order.guest_name}
+Phone: ${order.guest_phone}
+Email: ${order.guest_email}
+
+Delivery Type: ${order.delivery_type}
+Address: ${order.delivery_address}
+
+⚠️ No items found in this order.
+
+Delivery Fee: RM ${safeNumber(order.delivery_fee).toFixed(2)}
+Total Paid: RM ${safeNumber(order.grand_total).toFixed(2)}
+    `;
+  }
+
   const itemLines = items.map((item, index) => {
 
-    // product name (from join)
+    // product name
     const itemName = item.products?.name || "Item";
 
-    // pricing (from DB schema)
-    const price = Number(item.unit_price || item.products?.price || 0);
-    const qty = Number(item.quantity || 1);
+    // pricing
+    const price = safeNumber(item.unit_price || item.products?.price);
+    const qty = safeNumber(item.quantity || 1);
 
-    const itemTotal = Number(item.subtotal || price * qty);
+    const itemTotal = safeNumber(item.subtotal || price * qty);
 
-    // addons (JOIN table)
+    // addons
     const addons = item.order_item_addons || [];
 
     const addonText =
       addons.length > 0
         ? addons.map((addon) => {
-            const addonName = addon.addons?.name || "Addon";
-            const addonPrice = Number(addon.unit_price || 0);
-            const addonQty = Number(addon.quantity || 1);
 
-            const total = addonPrice * addonQty;
+            const addonName = addon.addons?.name || "Addon";
+            const addonPrice = safeNumber(addon.unit_price);
+            const addonQty = safeNumber(addon.quantity);
+
+            const total = safeNumber(addon.subtotal || addonPrice * addonQty);
 
             return `   + ${addonName} x${addonQty} - RM ${total.toFixed(2)}`;
+
           }).join("\n")
         : "   No add-ons";
 
@@ -190,8 +266,9 @@ const buildEmailTemplate = (order) => {
 ${index + 1}. ${itemName} x${qty}
 Item: RM ${itemTotal.toFixed(2)}
 ${addonText}
+-----------------------------
     `;
-  }).join("\n\n");
+  }).join("\n");
 
   return `
 AnisManis Order Receipt
@@ -210,9 +287,12 @@ Items:
 
 ${itemLines}
 
-Cart Total: RM ${Number(order.total_amount || 0).toFixed(2)}
-Delivery Fee: RM ${Number(order.delivery_fee || 0).toFixed(2)}
-Total Paid: RM ${Number(order.grand_total || 0).toFixed(2)}
+-----------------------------
+Cart Total: RM ${cartTotalWithAddons.toFixed(2)}
+Delivery Fee: RM ${safeNumber(order.delivery_fee).toFixed(2)}
+Online Processing Fee: RM 1.25
+-----------------------------
+Total Paid: RM ${totalPaidWithFee.toFixed(2)}
   `;
 };
 
