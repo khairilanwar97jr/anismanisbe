@@ -164,8 +164,8 @@ const handleWebhook = async (payload) => {
           accessToken: process.env.EMAILJS_PRIVATE_KEY,
 
           template_params: {
-            email: "kaibinaidea@gmail.com", //pruanisalimin@gmail.com
-            order_id: updatedOrder.id,
+            email: "pruanisalimin@gmail.com", //kaibinaidea@gmail.com
+            order_id: updatedOrder.id, 
             message: ownerEmailMessage
           }
         }
